@@ -102,6 +102,19 @@ class Head(nn.Module):
 
         return out
 
+class FeedForward(nn.Module):
+    '''A simple linear layer, followed by a non linearity'''
+
+    def __init__(self, n_emb):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_emb, n_emb),
+            nn.ReLU(),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
 class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, head_size):
         super().__init__()
@@ -120,6 +133,8 @@ class BigramLanguageModel(nn.Module):
         self.sa_heads = MultiHeadAttention(4, n_emb//4)
         self.lm_head = nn.Linear(n_emb, vocab_size)
 
+        self.feed_forward = FeedForward(n_emb)
+
     def forward(self, idx, targets=None):
         B, T = idx.shape
         # crop idx to the last block_size tokens to fit position embeddings
@@ -131,6 +146,7 @@ class BigramLanguageModel(nn.Module):
         x = token_emb + pos_emb
         # x = self.sa_head(x)
         x = self.sa_heads(x)
+        x = self.feed_forward(x)
         logits = self.lm_head(x)
 
         if targets is None:
@@ -150,6 +166,7 @@ class BigramLanguageModel(nn.Module):
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
+
 
 
 model = BigramLanguageModel()
