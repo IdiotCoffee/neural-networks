@@ -19,7 +19,7 @@ print("length of dataset:", len(text))
 
 # print(text[:1000])
 
-chars = sorted(list(set(text)))
+chars = sorted(set(text))
 vocab_size = len(chars)
 # print("".join(chars))
 # print(vocab_size)
@@ -89,7 +89,7 @@ class Head(nn.Module):
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
     def forward(self, x):
-        B, T, C = x.shape
+        _B, T, C = x.shape
         k = self.key(x)
         q = self.query(x)
         wei = q @ k.transpose(-2, -1) * C**-0.5
@@ -108,20 +108,41 @@ class FeedForward(nn.Module):
     def __init__(self, n_emb):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_emb, n_emb),
+            nn.Linear(n_emb, 4 * n_emb),
             nn.ReLU(),
+            nn.Linear(4 * n_emb, n_emb),
         )
 
     def forward(self, x):
         return self.net(x)
 
+class Block(nn.Module):
+    '''Transformer layer: for optimization, this carries out communication followed by computation.'''
+
+    def __init__(self,n_emb, n_head):
+        # n_emb: embedding dimension, n_head: the number of heads we'd like
+        super().__init__()
+        head_size = n_emb // n_head
+        self.sa = MultiHeadAttention(n_head, head_size)
+        self.ffwd = nn.FeedFoward(n_emb)
+        self.ln1 = nn.LayerNorm(n_emb)
+        self.ln2 = nn.LayerNorm(n_emb)
+
+    def forward(self, x):
+        x = x + self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
+        return x
+
 class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(num_heads * head_size, n_emb)
 
     def forward(self, x):
-        return torch.cat([h(x) for h in self.heads], dim=-1)
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.proj(out)
+        return out
 
 class BigramLanguageModel(nn.Module):
     def __init__(self):
@@ -130,7 +151,13 @@ class BigramLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, n_emb)
         self.position_embedding_table = nn.Embedding(block_size, n_emb)
         # self.sa_head = Head(n_emb)
-        self.sa_heads = MultiHeadAttention(4, n_emb//4)
+        self.blocks = nn.Sequential(
+            Block(n_emb, n_head=4),
+            Block(n_emb, n_head=4),
+            Block(n_emb, n_head=4),
+            nn.LayerNorm(n_emb),
+        )
+        # self.sa_heads = MultiHeadAttention(4, n_emb//4)
         self.lm_head = nn.Linear(n_emb, vocab_size)
 
         self.feed_forward = FeedForward(n_emb)
